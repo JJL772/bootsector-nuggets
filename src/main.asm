@@ -1,18 +1,60 @@
-;
-; load.asm
-; Program loader
+;==========================================================================;
+; Name: main.asm
+; Desc: Program entry point.
 ; 
-; Jeremy Lorelli jeremy.lorelli.1337@gmail.com
-; July 20th, 2019
+; Ext Desc: This program is a small bootsector render demo. No graphics
+; apis are used here, instead we directly play with the framebuffer &
+; implement our own little graphics pipeline
+;
+; Author: Jeremy Lorelli jeremy.lorelli.1337@gmail.com
+; Date: March 1st, 2020
 ;
 ; Stack size: 16kb
 ; Segments:
-; ss	-	0x0
-; ds	-	0xFFFF (64kb)
-; cs	-	0x7C00
+;  ss	-	0x0
+;  ds	-	0xFFFF (64kb)
+;  cs	-	0x7C00
+;
+; Globals:
+;  depth buffer   - 2kb, 8-bit depth: 0x1000-0x17d0
+;  
+; 
+; Other Info:
+; coords -   16-bit signed integers, 0,0,0 is camera origin
+; units  -   cm
+;
+; Depth Buffer Info:
+;  The depth buffer is a 8-bit monochrome buffer that represents depth in
+;  an image. The value 0xff represents the smallest distance from the cam
+;  The depth buffer is the same resolution as the screen, 80x25, and it is
+;  2kb in size.
+;
+;==========================================================================;
 BITS 16
 
 ORG 0x7C00
+
+;==========================================================================;
+; Color Constants
+;==========================================================================;
+%define COLOR_BLACK     0x0 
+%define COLOR_BLUE      0x1 
+%define COLOR_GREEN     0x2 
+%define COLOR_CYAN      0x3 
+%define COLOR_RED       0x4 
+%define COLOR_MAGENTA   0x5 
+%define COLOR_BROWN     0x6 
+%define COLOR_GRAY      0x7 
+%define COLOR_DGRAY     0x8 
+%define COLOR_BBLUE     0x9 
+%define COLOR_BGREEN    0xA 
+%define COLOR_BCYAN     0xB 
+%define COLOR_BRED      0xC 
+%define COLOR_BMAGENTA  0xD 
+%define COLOR_YELLOW    0xE 
+%define COLOR_WHITE     0xF 
+%define MAKE_COLOR(bg, fg, c) ((bg << 12) | (fg << 8) | (c)) 
+;==========================================================================;
 
 _boot:
 	; select stack, 16kb
@@ -20,81 +62,92 @@ _boot:
 	mov ss, ax
 	mov sp, 16384
 	mov bp, 16384
-	mov ax, cs
 	mov ds, ax
 
-	; set video mode
-	mov ah, 0
-	mov al, 0x3
-	int 0x10
+	; Flush the framebuffer with white
+	mov ax, MAKE_COLOR(COLOR_BBLUE,COLOR_WHITE,' ')
+	mov bx, 0xb800
+	mov cx, 80*25*2
+	call flush_buffer
+	
+	; Flush the depth buffer with black
+	mov ax, MAKE_COLOR(COLOR_BLACK,COLOR_WHITE,' ')
+	mov bx, 0x1000
+	mov cx, 2000
+	call flush_buffer
 
-	; set cursor pos
-	mov ah, 2
-	mov bh, 0
-	mov dh, 0
-	mov dl, 0
-	int 0x10
+	jmp _boot
 
-	mov bx, 0
-	mov ax, _header_string
-	mov cx, 10
-	call _draw_string
+;
+; Draws a quad centered at the specified position with the specified size
+; Params:
+;	bp-2 - origin x
+;   bp-4 - origin y
+;   bp-6 - origin z
+;   bp-8 - length/width/height
+;   bp-10 - rotational position, bits 0-4: rotation x, bits 5-9: rotation y, bits 10-14: rotation z
+;   bp-12 - color, lowest bit used, see vga colors table
+;   bp-14 - draw mode, 1 for tris, 0 for lines
+;
+draw_quad:
+	push bp
+	mov bp, sp 
 
-; Draws string pointed to by AX, length in CX
-; Draws at coordinate BH (x) and BL (y)
-_draw_string:
-	mov si, ax
-	mov bp, ax
-	mov ax, cs
-	mov es, ax
-	mov ah, 0x13
-	mov al, 0
-	mov bx, 0
-	mov dx, 0
-	int 0x10
-	ret
+	pop bp
+	ret 
 
-.loop:
-	;mov si, ax
-	push ax
-	push bx
-	push cx
-	push dx
+;
+; Flushes the buffer with the value in ax
+; Params:
+;   bx - buffer base addr (must be aligned to 2-byte bounds!) 
+;   cx - buffer size
+;
+flush_buffer:
+	pusha 
+	xor si, si 
+	mov ds, bx 
+	.flush_screen_loop:
+	mov word [ds:si], ax 
+	add si, 2
+	cmp si, cx 
+	jle .flush_screen_loop 
+	popa
+	ret 
+;
+; Dot product between two vectors
+; Params:
+;   ax - x1
+;   bx - y1
+;   cx - z1
+;   dx - x2
+;   si - y2
+;   di - z2
+; returns:
+;   ax - dot product
+; 
+dot_product:
+	imul ax, dx
+	imul bx, si
+	imul cx, di
+	add ax, bx
+	add ax, cx
+	ret 
 
-	; move cursor
-	mov dx, bx
-	mov ah, 2
-	mov bh, 0
-	int 0x10
-
-	; draw
-	mov ah, 0x0A
-	lodsb
-	;mov byte al, [si]
-	mov bh, 0
-	mov bl, 0xFF
-	mov cx, 1
-	int 0x10
-
-	pop dx
-	pop cx
-	pop bx
-	pop ax
-
-	inc si
-	inc bl
-	dec cx
-	cmp cx, 0
-	jne .loop
-
-	ret
-
-_header_string: db	"Game ROM loader for 8086/8088", 0
-_author_string: db	"Author: Jeremy Lorelli", 0
-_date_string:	db 	"Version 1, July 2019", 0
 
 _end:
 	times 510-($-$$) db 0
 	dw 0xAA55
 
-
+;
+; Integral linear interpolation.
+; This will clobber ax, bx and cx
+; Params:
+;  ax - i1
+;  bx - i2
+;  cx - bias
+;
+lerpf:
+	sub bx, ax
+	imul cx, bx
+	add ax, cx 
+	ret 
