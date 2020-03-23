@@ -35,6 +35,14 @@ BITS 16
 ORG 0x7C00
 
 ;==========================================================================;
+; Location constants
+;==========================================================================;
+%define DEPTH_BUFFER_SEG	0x1000 
+%define BACK_BUFFER_SEG		0x2000 
+%define FRAME_BUFFER_SEG	0xb800 
+;==========================================================================;
+
+;==========================================================================;
 ; Color Constants
 ;==========================================================================;
 %define COLOR_BLACK     0x0 
@@ -75,6 +83,8 @@ _boot:
 	mov bx, 0x1000
 	mov cx, 2000
 	call flush_buffer
+
+	; 
 
 	jmp _boot
 
@@ -133,11 +143,6 @@ dot_product:
 	add ax, cx
 	ret 
 
-
-_end:
-	times 510-($-$$) db 0
-	dw 0xAA55
-
 ;
 ; Integral linear interpolation.
 ; This will clobber ax, bx and cx
@@ -151,3 +156,8 @@ lerpf:
 	imul cx, bx
 	add ax, cx 
 	ret 
+
+_end:
+	times 510-($-$$) db 0
+	dw 0xAA55
+
